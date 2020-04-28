@@ -39,9 +39,10 @@
             this.textBox1.Multiline = true;
             this.textBox1.Name = "textBox1";
             this.textBox1.ReadOnly = true;
+            this.textBox1.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
             this.textBox1.Size = new System.Drawing.Size(681, 297);
             this.textBox1.TabIndex = 0;
-            this.textBox1.Text = "Open/drag a MIDI file";
+            this.textBox1.Text = "Open/drag a MIDI/MML file";
             // 
             // btnOpen
             // 
@@ -73,7 +74,7 @@
             this.Controls.Add(this.btnOpen);
             this.Controls.Add(this.textBox1);
             this.Name = "Form1";
-            this.Text = "MIDI File Fixer";
+            this.Text = "MIDI/MML File Fixer";
             this.DragDrop += new System.Windows.Forms.DragEventHandler(this.FormDragDrop);
             this.DragEnter += new System.Windows.Forms.DragEventHandler(this.FormDragEnter);
             this.ResumeLayout(false);

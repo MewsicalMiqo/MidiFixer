@@ -17,6 +17,7 @@ namespace MidiFixer
     {
         MidiFile song;
         string filePath;
+        StringBuilder sb;
 
         public Form1()
         {
@@ -32,20 +33,37 @@ namespace MidiFixer
         void FormDragDrop(object sender, DragEventArgs e)
         {
             string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
-            for (int i = 0; i < files.Length; i++)
-            {
-                if (files[i].EndsWith(".mid"))
-                {
-                    LoadMIDIFromFile(files[i]);
-                    break;
-                }
-            }
+
+            if (files[0].EndsWith(".mid"))
+                LoadMIDIFile(files[0]);
+            else if (files[0].EndsWith(".mml"))
+                LoadMMLFile(files[0]);
         }
 
-        void LoadMIDIFromFile(string path)
+        void LoadMMLFile(string path)
         {
-            song = MidiFile.Read(path);
             filePath = path;
+            string _importedMML = File.ReadAllText(path);
+            _importedMML = _importedMML.Remove(0, 4);  // removes MML@
+            _importedMML = _importedMML.Trim(new char[] { ';' });
+            var _MMLTracks = _importedMML.Split(',');
+            textBox1.Clear();
+
+            sb = new StringBuilder();
+            string channelHeader;
+            for (int ch = 1, chunk = _MMLTracks.Length - 1; ch < _MMLTracks.Length + 1; ch++, chunk--)
+            {
+                channelHeader = "[Channel" + ch.ToString() + "]";
+                sb.Append(channelHeader + Environment.NewLine);
+                sb.Append(_MMLTracks[chunk] + Environment.NewLine);                
+            }
+            textBox1.AppendText(sb.ToString());
+        }
+
+        void LoadMIDIFile(string path)
+        {
+            filePath = path;
+            song = MidiFile.Read(path);
             textBox1.Text = "MIDI File: " + Path.GetFileName(path) + Environment.NewLine;
             textBox1.AppendText("Type: " + song.OriginalFormat + Environment.NewLine);
             textBox1.AppendText("Channels: " + song.GetChannels().Count() + Environment.NewLine);
@@ -61,7 +79,7 @@ namespace MidiFixer
         private void btnOpen_Click(object sender, EventArgs e)
         {
             OpenFileDialog openFileDialog = new OpenFileDialog();
-            openFileDialog.Filter = "MIDI files (*.mid)|*.mid";
+            openFileDialog.Filter = "MIDI files (*.mid)|*.mid|MML files (*.mml)|*.mml";
             openFileDialog.RestoreDirectory = true;
 
             string filePath = default;
@@ -69,52 +87,64 @@ namespace MidiFixer
             if (openFileDialog.ShowDialog() == DialogResult.OK)
             {
                 filePath = openFileDialog.FileName;
-                LoadMIDIFromFile(filePath);
+                if (filePath.EndsWith(".mid"))
+                    LoadMIDIFile(filePath);
+                else if (filePath.EndsWith(".mml"))
+                    LoadMMLFile(filePath);
             }
         }
 
         private void btnSave_Click(object sender, EventArgs e)
         {
-            var chunks = song.GetTrackChunks();
-            var tempoMap = song.GetTempoMap();
-            var channels = song.GetChannels();
-
-            var fixedMidi = new MidiFile();
-            var headerChunk = new TrackChunk();
-
-            var headerEvents = chunks.ElementAt(0).GetTimedEvents();
-            var titleEvent = new List<TimedEvent>();
-            foreach (var evt in headerEvents)
+            if (Path.GetExtension(filePath) == ".mid")
             {
-                if (evt.Event.EventType == MidiEventType.SequenceTrackName)
+                var chunks = song.GetTrackChunks();
+                var tempoMap = song.GetTempoMap();
+                var channels = song.GetChannels();
+
+                var fixedMidi = new MidiFile();
+                var headerChunk = new TrackChunk();
+
+                var headerEvents = chunks.ElementAt(0).GetTimedEvents();
+                var titleEvent = new List<TimedEvent>();
+                foreach (var evt in headerEvents)
                 {
-                    var txtEvent = evt.Event as SequenceTrackNameEvent;
-                    titleEvent.Add(evt);
-                    break;
+                    if (evt.Event.EventType == MidiEventType.SequenceTrackName)
+                    {
+                        var txtEvent = evt.Event as SequenceTrackNameEvent;
+                        titleEvent.Add(evt);
+                        break;
+                    }
                 }
+                headerChunk.AddTimedEvents(titleEvent);
+
+                fixedMidi.Chunks.Add(headerChunk);
+                fixedMidi.ReplaceTempoMap(tempoMap);
+
+                var notes = song.GetNotes();
+                for (int i = 0; i < channels.Count(); i++)
+                {
+                    var trackNotes = notes.Where(n => n.Channel == i);
+                    if (trackNotes.Count() > 0)
+                    {
+                        var trackChunk = new TrackChunk();
+                        trackChunk.AddNotes(trackNotes);
+                        var newTimedEvents = GetTimedEventsByChannel(chunks, i);
+                        trackChunk.AddTimedEvents(newTimedEvents);
+                        fixedMidi.Chunks.Add(trackChunk);
+                    }
+                }
+
+                string outputFilename = Path.GetFileNameWithoutExtension(filePath) + "_fix.mid";
+                WriteMidiToFile(fixedMidi, outputFilename);
+                textBox1.AppendText("Wrote to file: " + outputFilename + Environment.NewLine);
             }
-            headerChunk.AddTimedEvents(titleEvent);
-
-            fixedMidi.Chunks.Add(headerChunk);
-            fixedMidi.ReplaceTempoMap(tempoMap);
-
-            var notes = song.GetNotes();
-            for (int i = 0; i < channels.Count(); i++)
+            else if (Path.GetExtension(filePath) == ".mml")
             {
-                var trackNotes = notes.Where(n => n.Channel == i);
-                if (trackNotes.Count() > 0)
-                {
-                    var trackChunk = new TrackChunk();
-                    trackChunk.AddNotes(trackNotes);
-                    var newTimedEvents = GetTimedEventsByChannel(chunks, i);
-                    trackChunk.AddTimedEvents(newTimedEvents);
-                    fixedMidi.Chunks.Add(trackChunk);
-                }
+                string outputFilename = Path.GetFileNameWithoutExtension(filePath) + "_fix.mml";
+                File.WriteAllText(outputFilename, sb.ToString());
+                textBox1.AppendText("Wrote to file: " + outputFilename + Environment.NewLine);
             }
-            
-            string outputFilename = Path.GetFileNameWithoutExtension(filePath) + "_fix.mid";
-            WriteMidiToFile(fixedMidi, outputFilename);
-            textBox1.AppendText("Wrote to file: " + outputFilename + Environment.NewLine);
         }
 
         private void ReadTracksFromFile(MidiFile song)
