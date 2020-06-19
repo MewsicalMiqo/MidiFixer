@@ -1,8 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
 using System.Data;
-using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -98,41 +95,60 @@ namespace MidiFixer
         {
             if (Path.GetExtension(filePath) == ".mid")
             {
-                var chunks = song.GetTrackChunks();
+                var chunks = song.GetTrackChunks().ToArray();
                 var tempoMap = song.GetTempoMap();
-                var channels = song.GetChannels();
-
                 var fixedMidi = new MidiFile();
                 var headerChunk = new TrackChunk();
 
-                var headerEvents = chunks.ElementAt(0).GetTimedEvents();
-                var titleEvent = new List<TimedEvent>();
-                foreach (var evt in headerEvents)
+                int i = 0;
+                var t0Notes = chunks[0].GetNotes().ToArray();
+                if (t0Notes.Length == 0)    // check if there are notes in Track0
                 {
-                    if (evt.Event.EventType == MidiEventType.SequenceTrackName)
-                    {
-                        var txtEvent = evt.Event as SequenceTrackNameEvent;
-                        titleEvent.Add(evt);
-                        break;
-                    }
+                    i = 1;
+                    var timedEvents = chunks[0].GetTimedEvents().ToArray();
+                    var title = timedEvents.Where(t => t.Event.EventType == MidiEventType.SequenceTrackName);
+                    if (title.Count() == 1)
+                        headerChunk.AddTimedEvents(title);
                 }
-                headerChunk.AddTimedEvents(titleEvent);
 
                 fixedMidi.Chunks.Add(headerChunk);
                 fixedMidi.ReplaceTempoMap(tempoMap);
 
-                var notes = song.GetNotes();
-                for (int i = 0; i < channels.Count(); i++)
+                for (int ch = 0; i < chunks.Count(); i++, ch++)
                 {
-                    var trackNotes = notes.Where(n => n.Channel == i);
-                    if (trackNotes.Count() > 0)
+                    var newChunk = new TrackChunk();
+                    var timedEvents = chunks[i].GetTimedEvents();
+
+                    using (var timedEventsManager = newChunk.ManageTimedEvents())
                     {
-                        var trackChunk = new TrackChunk();
-                        trackChunk.AddNotes(trackNotes);
-                        var newTimedEvents = GetTimedEventsByChannel(chunks, i);
-                        trackChunk.AddTimedEvents(newTimedEvents);
-                        fixedMidi.Chunks.Add(trackChunk);
+                        foreach (var timedEvent in timedEvents)
+                        {
+                            var eventType = timedEvent.Event.EventType;
+                            if (eventType == MidiEventType.SequenceTrackName)
+                            {
+                                timedEventsManager.Events.Add(timedEvent);
+                            }
+                            else if (eventType == MidiEventType.ProgramChange)
+                            {
+                                var pcEvent = timedEvent.Event as ProgramChangeEvent;
+                                pcEvent.Channel = (FourBitNumber)ch;
+                                timedEventsManager.Events.AddEvent(pcEvent, timedEvent.Time);
+                            }
+                        }
                     }
+
+                    using (var notesManager = newChunk.ManageNotes())
+                    {
+                        var notes = chunks[i].GetNotes().ToArray();
+                        foreach (var n in notes)
+                        {
+                            var newNote = n;
+                            newNote.Channel = (FourBitNumber)ch;   // change channel of the notes in track
+                            notesManager.Notes.Add(newNote);
+                        }
+                    }
+
+                    fixedMidi.Chunks.Add(newChunk);
                 }
 
                 string outputFilename = Path.GetFileNameWithoutExtension(filePath) + "_fix.mid";
@@ -159,33 +175,6 @@ namespace MidiFixer
                     textBox1.AppendText("ch" + s + " ");
                 textBox1.AppendText(Environment.NewLine);
             }
-        }
-
-        private List<TimedEvent> GetTimedEventsByChannel(IEnumerable<TrackChunk> chunks, int ch)
-        {
-            var timedEvents = chunks.GetTimedEvents();
-            var newTimedEvents = new List<TimedEvent>();
-
-            foreach (var timedEvent in timedEvents)
-            {
-                var pc = timedEvent.Event as ProgramChangeEvent;
-                if (pc != null && pc.Channel == ch)
-                    newTimedEvents.Add(timedEvent);
-            }            
-            foreach (var c in chunks)
-            {
-                var channels = c.GetChannels();
-                if (channels.Contains((FourBitNumber)ch))
-                {
-                    var textEvents = c.GetTimedEvents().Where(evt => evt.Event.EventType == MidiEventType.SequenceTrackName);
-                    if (textEvents.Count() == 0)
-                        continue;
-                    else
-                        foreach (var te in textEvents)
-                            newTimedEvents.Add(te);
-                }
-            }
-            return newTimedEvents;
         }
     }
 }
